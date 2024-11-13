@@ -58,14 +58,22 @@ while row_num < len(events_df):
     if rating_num < len(historic_ratings):
         next_rating = historic_ratings[rating_num]
         rating_tstamp = next_rating[2]
+
+    
     next_row = events_df.iloc[row_num]
     row_tstamp = next_row["timestamp"]
+## added in the block below to convert both times to UTC format 
+    if rating_tstamp and row_tsamp:
+        if rating_tstamp.tzinfo is None:
+            rating_tstamp = rating_tstamp.replace(tzinfo=pytz.UTC)
+        if row_tstamp.tzinfo is None:
+            row_tstamp = row_tstamp.replace(tzinfo=pytz.UTC)
     print(
         rating_num,
         rating_tstamp.tzinfo,
         row_num,
         row_tstamp.tzinfo,
-        rating_tstamp - row_tstamp,
+        (rating_tstamp - row_tstamp) if rating_tstamp and row_tstamp else "N/A", ## added in to check whether or not the timestamps exist 
         sep="\t",
     )
     if rating_tstamp is not None and rating_tstamp < row_tstamp:
