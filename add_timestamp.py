@@ -1,16 +1,36 @@
 import pandas as pd
-import json
-from os.path import isfile, join
 from pathlib import Path
 import sys
 from sqlalchemy import create_engine, text
+import json
+from datetime import timedelta
+import pytz  # To handle timezone conversions
 
+# Ensures a file is provided as an argument
 if len(sys.argv) != 2:
-    print("oh no. call with filename tho")
+    print("Usage: python script.py <input_file>")
     sys.exit(1)
-input_file = sys.argv[1]
-movie_id = int(input_file[19:-6])
 
+# Gets the input file from command-line arguments
+input_file = sys.argv[1]
+
+# Converts to a Path object and resolve the absolute path
+file_path = Path(input_file).resolve()
+
+# Checks to see if the file exists
+if not file_path.is_file():
+    print(f"Error: File '{file_path}' not found.")
+    sys.exit(1)
+
+print(f"Processing file: {file_path}")
+
+# Extracts movie_id from the file name safely
+try:
+    file_name = file_path.stem
+    movie_id = int(file_name.split('_')[1])  # Extracts the number after "movie_"
+except (IndexError, ValueError) as e:
+    print(f"Error: Unable to extract movie ID from the file name '{file_path.name}'.")
+    sys.exit(1)
 
 # Database configuration
 db_config = {
@@ -23,32 +43,69 @@ engine = create_engine(
     f"mysql+pymysql://{db_config['user']}:{db_config['password']}@{db_config['host']}/{db_config['database']}"
 )
 
-
+# Queries historic ratings from the database
 historic_ratings = []
-
 query = text(
     """
     SELECT userId, rating, system_tstamp
     FROM user_rating_pairs_history
-    where movieId = :movieID
-    order by system_tstamp asc;
-"""
+    WHERE movieId = :movieID
+    ORDER BY system_tstamp ASC;
+    """
 )
-
 params = {"movieID": movie_id}
 
 with engine.connect() as connection:
     result = connection.execute(query, params)
-
-    # Stores the results in the avg_ratings dictionary
     for row in result.fetchall():
-        historic_ratings.append(tuple(row))
+        historic_ratings.append({
+            "userId": row[0],
+            "rating": row[1],
+            "system_tstamp": pd.Timestamp(row[2], tz="UTC")  # Ensure UTC timezone
+        })
 
-events_df = pd.read_json(input_file, lines=True)
+# Reads the events data
+try:
+    # Attempts to read JSONL data with error handling
+    events_df = pd.read_json(file_path, lines=True)
+    print(f"Successfully read the JSONL file: {file_path}")
+except ValueError as e:
+    print(f"Error reading JSON file: {e}")
+    print("Attempting to read and print a sample of the file to inspect the issue...")
+    
+    # Tries to manually load the JSON to find the error
+    with open(file_path, "r", encoding="utf-8") as file:
+        for i, line in enumerate(file):
+            try:
+                json.loads(line)  # Attempt to parse each line
+            except json.JSONDecodeError as json_error:
+                print(f"Error decoding JSON on line {i + 1}: {json_error}")
+                print(f"Line content: {line.strip()}")
+                break
+
+    sys.exit(1)
+
 events_df.sort_values(by=["timestamp"], inplace=True, ascending=True)
 events_df["avg_rating"] = 0
 
+# Function to format the timedelta as days, hours, minutes, seconds
+def format_timedelta(td):
+    if td is None:
+        return "No timestamp available"
+    if isinstance(td, timedelta):
+        sign = "-" if td.days < 0 else ""
+        td = abs(td)  # Works with the absolute value for formatting
+        return f"{sign}{td.days} days {td.seconds // 3600} hours {(td.seconds % 3600) // 60} minutes {(td.seconds % 60)} seconds"
+    return "N/A"
 
+# Define timezones
+utc = pytz.utc
+central = pytz.timezone("US/Central")
+
+# Tolerance for matching timestamps
+tolerance = timedelta(seconds=30)  # Allows a maximum of 30 seconds mismatch
+
+# Processes the data
 row_num = 0
 rating_num = 0
 
@@ -57,30 +114,40 @@ while row_num < len(events_df):
     rating_tstamp = None
     if rating_num < len(historic_ratings):
         next_rating = historic_ratings[rating_num]
-        rating_tstamp = next_rating[2]
+        rating_tstamp = next_rating["system_tstamp"]
 
-    
     next_row = events_df.iloc[row_num]
-    row_tstamp = next_row["timestamp"]
-## added in the block below to convert both times to UTC format 
-    if rating_tstamp and row_tsamp:
-        if rating_tstamp.tzinfo is None:
-            rating_tstamp = rating_tstamp.replace(tzinfo=pytz.UTC)
-        if row_tstamp.tzinfo is None:
-            row_tstamp = row_tstamp.replace(tzinfo=pytz.UTC)
+    row_tstamp = pd.Timestamp(next_row["timestamp"])  # Convert to pandas Timestamp
+
+    # Handle timezone-awareness for row_tstamp
+    if row_tstamp.tzinfo is None:
+        # Assume row_tstamp is in Central Time if naive, then convert to UTC
+        row_tstamp = row_tstamp.tz_localize(central).astimezone(utc)
+
+    # Calculates the time difference
+    time_diff = (rating_tstamp - row_tstamp) if rating_tstamp and row_tstamp else None
+
+    # Prints the formatted time difference
     print(
-        rating_num,
-        rating_tstamp.tzinfo,
-        row_num,
-        row_tstamp.tzinfo,
-        (rating_tstamp - row_tstamp) if rating_tstamp and row_tstamp else "N/A", ## added in to check whether or not the timestamps exist 
-        sep="\t",
+        f"Rating {rating_num}: {rating_tstamp} (UTC), Row {row_num}: {row_tstamp} (UTC), Time Difference: {format_timedelta(time_diff)}",
+        sep="\t"
     )
-    if rating_tstamp is not None and rating_tstamp < row_tstamp:
-        # advance rating
-        rating_num += 1
-        pass
+    
+    # Check if timestamps match within the tolerance
+    if time_diff and abs(time_diff) <= tolerance:
+        # Matching timestamps found
+        events_df.at[row_num, "avg_rating"] = next_rating["rating"]
+        rating_num += 1  # Move to the next rating
     else:
-        # advance row
-        row_num += 1
-        pass
+        # Move to the next row or rating
+        if rating_tstamp and rating_tstamp < row_tstamp:
+            rating_num += 1
+        else:
+            row_num += 1
+
+output_file = file_path.parent / f"processed_{file_path.name}"
+events_df.to_csv(output_file, index=False)
+print(f"Processed data saved to: {output_file}")
+
+##look at action logs in database
+## pull movieeId from website and see if it updated correctly in databse
