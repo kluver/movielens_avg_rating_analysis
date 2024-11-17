@@ -4,7 +4,7 @@ import sys
 from sqlalchemy import create_engine, text
 import json
 from datetime import timedelta
-import pytz  # To handle timezone conversions
+import pytz
 
 # Ensures a file is provided as an argument
 if len(sys.argv) != 2:
@@ -98,7 +98,7 @@ def format_timedelta(td):
         return f"{sign}{td.days} days {td.seconds // 3600} hours {(td.seconds % 3600) // 60} minutes {(td.seconds % 60)} seconds"
     return "N/A"
 
-# Define timezones
+# Defines timezones
 utc = pytz.utc
 central = pytz.timezone("US/Central")
 
@@ -119,27 +119,32 @@ while row_num < len(events_df):
     next_row = events_df.iloc[row_num]
     row_tstamp = pd.Timestamp(next_row["timestamp"])  # Convert to pandas Timestamp
 
-    # Handle timezone-awareness for row_tstamp
+    # Handles timezone-awareness for row_tstamp
     if row_tstamp.tzinfo is None:
-        # Assume row_tstamp is in Central Time if naive, then convert to UTC
+        # Assume row_tstamp is in Central Time (if naive), then convert to UTC
         row_tstamp = row_tstamp.tz_localize(central).astimezone(utc)
+
+# Debug: Print raw and converted timestamps
+    print(f"Raw Row Timestamp: {next_row['timestamp']} (Assumed Central Time)")
+    print(f"Converted Row Timestamp: {row_tstamp} (UTC)")
+    print(f"Historic Rating Timestamp: {rating_tstamp} (UTC)")
 
     # Calculates the time difference
     time_diff = (rating_tstamp - row_tstamp) if rating_tstamp and row_tstamp else None
 
-    # Prints the formatted time difference
+
     print(
-        f"Rating {rating_num}: {rating_tstamp} (UTC), Row {row_num}: {row_tstamp} (UTC), Time Difference: {format_timedelta(time_diff)}",
-        sep="\t"
-    )
+    f"Rating {rating_num}: {rating_tstamp} (UTC), Row {row_num}: {row_tstamp} (UTC), Time Difference: {format_timedelta(time_diff)}",
+    sep="\t"
+)
     
-    # Check if timestamps match within the tolerance
+    # Checks if timestamps match within the tolerance
     if time_diff and abs(time_diff) <= tolerance:
         # Matching timestamps found
         events_df.at[row_num, "avg_rating"] = next_rating["rating"]
         rating_num += 1  # Move to the next rating
     else:
-        # Move to the next row or rating
+        # Moves to the next row or rating
         if rating_tstamp and rating_tstamp < row_tstamp:
             rating_num += 1
         else:
