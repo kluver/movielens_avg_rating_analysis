@@ -6,7 +6,6 @@ from pathlib import Path
 import pandas as pd
 import json
 
-
 # Step 1: Filters 'rating' events and save to an intermediate file
 def filter_rating_events(input_files, filtered_file):
     with open(filtered_file, "w") as filtered_output:
