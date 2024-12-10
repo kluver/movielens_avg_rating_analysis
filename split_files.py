@@ -6,7 +6,7 @@ from pathlib import Path
 
 # Step 2: Splits the filtered file into intermediate files based on movieId batches
 def split_by_movie_id(input_file, output_folder):
-    events_df = pd.read_json(input_file, lines=True)
+    events_df = pd.read_json(input_file, lines=True, convert_dates=False)
     unique_movie_ids = events_df["movieId"].dropna().unique()
 
     for movie_id in unique_movie_ids:
