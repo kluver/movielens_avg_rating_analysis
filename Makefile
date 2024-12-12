@@ -11,6 +11,6 @@ out/processed_with_timestamp/.done: out/by_movie/.done
 	touch out/processed_with_timestamp/.done
 
 # Rule for merging all processed data
-out/merged_data.csv: out/by_movie/.done
-	pipenv run python3 merging.py out/by_movie/
-	touch out/merged_data.csv
+out/merged_data.csv: out/processed_with_timestamp/.done
+	pipenv run python3 merging.py
+	touch out/merged_data.csv/.done
